@@ -196,8 +196,16 @@ static void *ProgressObserverContext = &ProgressObserverContext;
         setPrefObject(@"internal.latest_version", responseObject[@"latest"]);
         [(id)(self.buttonInstall ?: self.buttonInstallItem) setEnabled:YES];
     } failure:^(NSURLSessionTask *operation, NSError *error) {
-        NSDebugLog(@"[VersionList] Warning: Unable to fetch version list: %@", error.localizedDescription);
+        NSLog(@"[VersionList] Warning: Unable to fetch version list: %@", error.localizedDescription);
         [(id)(self.buttonInstall ?: self.buttonInstallItem) setEnabled:YES];
+        // The first request often fails while the network is still coming up at
+        // launch time, so retry once a few seconds later if we only have the
+        // placeholder entries.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            if (remoteVersionList.count <= 2) {
+                [self fetchRemoteVersionList];
+            }
+        });
     }];
 }
 
@@ -424,12 +432,22 @@ static void *ProgressObserverContext = &ProgressObserverContext;
 
 - (void)invokeAfterJITEnabled:(void(^)(void))handler {
     localVersionList = remoteVersionList = nil;
+    // The version lists above are freed to save memory while the game runs,
+    // but they have to be rebuilt afterwards. Otherwise the version picker in
+    // the profile editor stays empty until the app is restarted.
+    void (^handlerAndReload)(void) = ^{
+        handler();
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self fetchRemoteVersionList];
+            [self reloadProfileList];
+        });
+    };
     BOOL hasTrollStoreJIT = getEntitlementValue(@"jb.pmap_cs.custom_trust");
     BOOL isLiveContainer = getenv("LC_HOME_PATH") != NULL;
 
     if (isJITEnabled(false)) {
         [ALTServerManager.sharedManager stopDiscovering];
-        handler();
+        handlerAndReload();
         return;
     } else if (hasTrollStoreJIT) {
         NSURL *jitURL = [NSURL URLWithString:[NSString stringWithFormat:@"apple-magnifier://enable-jit?bundle-id=%@", NSBundle.mainBundle.bundleIdentifier]];
@@ -437,7 +455,7 @@ static void *ProgressObserverContext = &ProgressObserverContext;
         // Do not return, wait for TrollStore to enable JIT and jump back
     } else if (getPrefBool(@"debug.debug_skip_wait_jit")) {
         NSLog(@"Debug option skipped waiting for JIT. Java might not work.");
-        handler();
+        handlerAndReload();
         return;
     } else if (@available(iOS 17.4, *)) {
         NSString *scriptDataString = @"";
@@ -470,7 +488,7 @@ static void *ProgressObserverContext = &ProgressObserverContext;
             usleep(1000*200);
         }
         dispatch_async(dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:handler];
+            [alert dismissViewControllerAnimated:YES completion:handlerAndReload];
         });
     });
 }
