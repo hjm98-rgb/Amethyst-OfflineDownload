@@ -314,14 +314,14 @@
 
 // Check if the account has permission to download
 - (BOOL)checkAccessWithDialog:(BOOL)show {
-    // for now
-    BOOL accessible = [BaseAuthenticator.current.authData[@"username"] hasPrefix:@"Demo."] || BaseAuthenticator.current.authData[@"xboxGamertag"] != nil;
-    if (!accessible) {
-        [self.progress cancel];
-        if (show) {
-            [self finishDownloadWithErrorString:@"Minecraft can't be legally installed when logged in with a local account. Please switch to an online account to continue."];
-        }
-    }
+    // Local (offline) accounts are allowed to download game files.
+    // The version manifest, client jar, libraries and assets are public resources
+    // served by Mojang, so there is no reason to require an online account here.
+    NSDictionary *authData = BaseAuthenticator.current.authData;
+    BOOL accessible = YES;
+    NSLog(@"[MCDL] Download access granted for account type: %@",
+          authData[@"xboxGamertag"] != nil ? @"online" : @"local/offline");
+    (void)show;
     return accessible;
 }
 
