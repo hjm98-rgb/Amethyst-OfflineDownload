@@ -14,6 +14,30 @@
 @property AFURLSessionManager* manager;
 @end
 
+// Rewrites Mojang CDN URLs to the BMCLAPI mirror, which serves the same files
+// from servers inside mainland China. Every downloaded file is still verified
+// against its SHA1, and the official URL is used again if the mirror fails.
+static NSString *MCMirrorURLString(NSString *url) {
+    static NSArray<NSArray<NSString *> *> *pairs;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        pairs = @[
+            @[@"https://launchermeta.mojang.com", @"https://bmclapi2.bangbang93.com"],
+            @[@"https://piston-meta.mojang.com", @"https://bmclapi2.bangbang93.com"],
+            @[@"https://piston-data.mojang.com", @"https://bmclapi2.bangbang93.com"],
+            @[@"https://launcher.mojang.com", @"https://bmclapi2.bangbang93.com"],
+            @[@"https://libraries.minecraft.net", @"https://bmclapi2.bangbang93.com/maven"],
+            @[@"https://resources.download.minecraft.net", @"https://bmclapi2.bangbang93.com/assets"],
+        ];
+    });
+    for (NSArray<NSString *> *pair in pairs) {
+        if ([url hasPrefix:pair[0]]) {
+            return [pair[1] stringByAppendingString:[url substringFromIndex:pair[0].length]];
+        }
+    }
+    return url;
+}
+
 @implementation MinecraftResourceDownloadTask
 
 - (instancetype)init {
@@ -21,6 +45,8 @@
     // TODO: implement background download
     NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration defaultSessionConfiguration];
     configuration.timeoutIntervalForRequest = 86400;
+    // Download libraries and assets in parallel instead of 4 at a time.
+    configuration.HTTPMaximumConnectionsPerHost = 8;
     //backgroundSessionConfigurationWithIdentifier:@"net.kdt.pojavlauncher.downloadtask"];
     self.manager = [[AFURLSessionManager alloc] initWithSessionConfiguration:configuration];
     self.fileList = [NSMutableArray new];
@@ -30,6 +56,10 @@
 
 // Add file to the queue
 - (NSURLSessionDownloadTask *)createDownloadTask:(NSString *)url size:(NSUInteger)size sha:(NSString *)sha altName:(NSString *)altName toPath:(NSString *)path success:(void (^)())success {
+    return [self createDownloadTask:url size:size sha:sha altName:altName toPath:path success:success allowMirror:YES];
+}
+
+- (NSURLSessionDownloadTask *)createDownloadTask:(NSString *)url size:(NSUInteger)size sha:(NSString *)sha altName:(NSString *)altName toPath:(NSString *)path success:(void (^)())success allowMirror:(BOOL)allowMirror {
     BOOL fileExists = [NSFileManager.defaultManager fileExistsAtPath:path];
     // logSuccess?
     if (fileExists && [self checkSHA:sha forFile:path altName:altName]) {
@@ -39,8 +69,9 @@
         return nil;
     }
 
+    NSString *fetchURL = allowMirror ? MCMirrorURLString(url) : url;
     NSString *name = altName ?: path.lastPathComponent;
-    NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:url]];
+    NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:fetchURL]];
     __block NSProgress *progress;
     __block NSURLSessionDownloadTask *task = [self.manager downloadTaskWithRequest:request progress:nil
     destination:^NSURL * _Nonnull(NSURL * _Nonnull targetPath, NSURLResponse * _Nonnull response) {
@@ -57,6 +88,12 @@
         if (self.progress.cancelled) {
             // Ignore any further errors
         } else if (error != nil) {
+            if (allowMirror && ![fetchURL isEqualToString:url]) {
+                NSLog(@"[MCDL] Mirror failed for %@ (%@), retrying official source", name, error.localizedDescription);
+                NSURLSessionDownloadTask *retry = [self createDownloadTask:url size:size sha:sha altName:altName toPath:path success:success allowMirror:NO];
+                [retry resume];
+                return;
+            }
             [self finishDownloadWithError:error file:name];
         } else if (![self checkSHA:sha forFile:path altName:altName]) {
             [self finishDownloadWithErrorString:[NSString stringWithFormat:@"Failed to verify file %@: SHA1 mismatch", path.lastPathComponent]];

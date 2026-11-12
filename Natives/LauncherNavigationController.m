@@ -181,6 +181,11 @@ static void *ProgressObserverContext = &ProgressObserverContext;
 }
 
 - (void)fetchRemoteVersionList {
+    [self fetchRemoteVersionListFrom:@"https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json"
+                            fallback:@"https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"];
+}
+
+- (void)fetchRemoteVersionListFrom:(NSString *)url fallback:(NSString *)fallbackURL {
     [(id)(self.buttonInstall ?: self.buttonInstallItem) setEnabled:NO];
     remoteVersionList = @[
         @{@"id": @"latest-release", @"type": @"release"},
@@ -188,7 +193,7 @@ static void *ProgressObserverContext = &ProgressObserverContext;
     ].mutableCopy;
 
     AFHTTPSessionManager *manager = [AFHTTPSessionManager manager];
-    [manager GET:@"https://piston-meta.mojang.com/mc/game/version_manifest_v2.json" parameters:nil headers:nil progress:^(NSProgress * _Nonnull progress) {
+    [manager GET:url parameters:nil headers:nil progress:^(NSProgress * _Nonnull progress) {
         self.progressViewMain.progress = progress.fractionCompleted;
     } success:^(NSURLSessionTask *task, NSDictionary *responseObject) {
         [remoteVersionList addObjectsFromArray:responseObject[@"versions"]];
@@ -196,7 +201,12 @@ static void *ProgressObserverContext = &ProgressObserverContext;
         setPrefObject(@"internal.latest_version", responseObject[@"latest"]);
         [(id)(self.buttonInstall ?: self.buttonInstallItem) setEnabled:YES];
     } failure:^(NSURLSessionTask *operation, NSError *error) {
-        NSLog(@"[VersionList] Warning: Unable to fetch version list: %@", error.localizedDescription);
+        NSLog(@"[VersionList] Warning: %@ failed: %@", url, error.localizedDescription);
+        if (fallbackURL.length > 0) {
+            // Mirror unavailable, fall back to the official endpoint.
+            [self fetchRemoteVersionListFrom:fallbackURL fallback:nil];
+            return;
+        }
         [(id)(self.buttonInstall ?: self.buttonInstallItem) setEnabled:YES];
         // The first request often fails while the network is still coming up at
         // launch time, so retry once a few seconds later if we only have the
