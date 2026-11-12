@@ -44,9 +44,11 @@ static NSString *MCMirrorURLString(NSString *url) {
     self = [super init];
     // TODO: implement background download
     NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration defaultSessionConfiguration];
-    configuration.timeoutIntervalForRequest = 86400;
+    // Fail a stalled connection in 30s instead of hanging for a day, so a dead
+    // CDN edge gets retried quickly.
+    configuration.timeoutIntervalForRequest = 30;
     // Download libraries and assets in parallel instead of 4 at a time.
-    configuration.HTTPMaximumConnectionsPerHost = 8;
+    configuration.HTTPMaximumConnectionsPerHost = 16;
     //backgroundSessionConfigurationWithIdentifier:@"net.kdt.pojavlauncher.downloadtask"];
     self.manager = [[AFURLSessionManager alloc] initWithSessionConfiguration:configuration];
     self.fileList = [NSMutableArray new];
@@ -69,7 +71,7 @@ static NSString *MCMirrorURLString(NSString *url) {
         return nil;
     }
 
-    NSString *fetchURL = allowMirror ? MCMirrorURLString(url) : url;
+    NSString *fetchURL = url;
     NSString *name = altName ?: path.lastPathComponent;
     NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:fetchURL]];
     __block NSProgress *progress;
@@ -88,9 +90,10 @@ static NSString *MCMirrorURLString(NSString *url) {
         if (self.progress.cancelled) {
             // Ignore any further errors
         } else if (error != nil) {
-            if (allowMirror && ![fetchURL isEqualToString:url]) {
-                NSLog(@"[MCDL] Mirror failed for %@ (%@), retrying official source", name, error.localizedDescription);
-                NSURLSessionDownloadTask *retry = [self createDownloadTask:url size:size sha:sha altName:altName toPath:path success:success allowMirror:NO];
+            NSString *mirroredURL = MCMirrorURLString(url);
+            if (allowMirror && ![mirroredURL isEqualToString:url]) {
+                NSLog(@"[MCDL] Official source failed for %@ (%@), retrying mirror", name, error.localizedDescription);
+                NSURLSessionDownloadTask *retry = [self createDownloadTask:mirroredURL size:size sha:sha altName:altName toPath:path success:success allowMirror:NO];
                 [retry resume];
                 return;
             }

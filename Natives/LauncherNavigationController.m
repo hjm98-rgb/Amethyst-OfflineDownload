@@ -181,8 +181,8 @@ static void *ProgressObserverContext = &ProgressObserverContext;
 }
 
 - (void)fetchRemoteVersionList {
-    [self fetchRemoteVersionListFrom:@"https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json"
-                            fallback:@"https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"];
+    [self fetchRemoteVersionListFrom:@"https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+                            fallback:@"https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json"];
 }
 
 - (void)fetchRemoteVersionListFrom:(NSString *)url fallback:(NSString *)fallbackURL {
